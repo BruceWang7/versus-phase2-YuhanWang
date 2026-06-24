@@ -1,0 +1,38 @@
+<!doctype html>
+
+<h1>Admin SQL Console</h1>
+
+<form action="/admin" method="post">
+  <textarea name="sql" rows="5" cols="80">{{ sql }}</textarea>
+  <br>
+  <input type="submit" value="Run SQL">
+</form>
+
+{% if error %}
+  <h3>Message</h3>
+  <p>{{ error }}</p>
+{% endif %}
+
+{% if rows %}
+  <h3>Result</h3>
+  <table border="1" cellpadding="4">
+    <tr>
+      {% for col in columns %}
+        <th>{{ col }}</th>
+      {% endfor %}
+    </tr>
+
+    {% for r in rows %}
+      <tr>
+        {% for value in r %}
+          <td>{{ value }}</td>
+        {% endfor %}
+      </tr>
+    {% endfor %}
+  </table>
+{% endif %}
+
+<br>
+<a href="/">Home</a>
+<br>
+<a href="/browse">Browse brackets</a>

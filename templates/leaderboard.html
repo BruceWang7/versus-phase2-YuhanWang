@@ -1,0 +1,28 @@
+<!doctype html>
+
+<h1>Leaderboard</h1>
+
+<table border="1" cellpadding="4">
+<tr>
+    <th>Rank</th>
+    <th>Dense Rank</th>
+    <th>Percent Rank</th>
+    <th>User</th>
+    <th>Points</th>
+</tr>
+
+{% for r in rows %}
+<tr>
+    <td>{{r[2]}}</td>
+    <td>{{r[3]}}</td>
+    <td>{{r[4]}}</td>
+    <td>{{r[0]}}</td>
+    <td>{{r[1]}}</td>
+</tr>
+{% endfor %}
+</table>
+
+<br>
+<a href="/">Home</a>
+<br>
+<a href="/browse">Browse brackets</a>
