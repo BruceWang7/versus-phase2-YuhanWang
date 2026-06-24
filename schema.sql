@@ -30,6 +30,7 @@ CREATE TABLE Brackets (
                              'round_1','round_2','round_3','round_4','round_5',
                              'completed'
                          ) NOT NULL DEFAULT 'predictions_open',
+    prediction_deadline DATETIME,
     created_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT chk_entrant_count CHECK (entrant_count IN (4,8,16,32)),
     CONSTRAINT fk_brackets_host  FOREIGN KEY (host_id) REFERENCES Users(user_id)
@@ -40,6 +41,7 @@ CREATE TABLE Entrants (
     bracket_id   INT NOT NULL,
     seed         INT NOT NULL,
     name         VARCHAR(255) NOT NULL,
+    image_url VARCHAR(500),
     CONSTRAINT fk_entrants_bracket FOREIGN KEY (bracket_id) REFERENCES Brackets(bracket_id),
     CONSTRAINT uq_entrants_seed    UNIQUE (bracket_id, seed)
 );
@@ -127,6 +129,99 @@ INSERT INTO Achievements (achievement_code, name, description)
 VALUES
 ('bracket_maker', 'Bracket Maker', 'Hosted the first bracket.'),
 ('locked_in', 'Locked In', 'Submitted 10 predictions.');
+
+DELIMITER $$
+
+CREATE TRIGGER trg_first_bracket_achievement
+AFTER INSERT ON Brackets
+FOR EACH ROW
+BEGIN
+    IF (
+        SELECT COUNT(*)
+        FROM Brackets
+        WHERE host_id = NEW.host_id
+    ) = 1 THEN
+        INSERT IGNORE INTO User_Achievements(user_id, achievement_code)
+        VALUES (NEW.host_id, 'bracket_maker');
+    END IF;
+END$$
+
+
+CREATE TRIGGER trg_prediction_status
+BEFORE INSERT ON Predictions
+FOR EACH ROW
+BEGIN
+    DECLARE bracket_status VARCHAR(50);
+
+    SELECT b.status
+    INTO bracket_status
+    FROM Matchups m
+    JOIN Brackets b ON m.bracket_id = b.bracket_id
+    WHERE m.matchup_id = NEW.matchup_id;
+
+    IF bracket_status <> 'predictions_open' THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Predictions are only allowed while predictions are open';
+    END IF;
+END$$
+
+
+CREATE TRIGGER trg_tenth_prediction_achievement
+AFTER INSERT ON Predictions
+FOR EACH ROW
+BEGIN
+    IF (
+        SELECT COUNT(*)
+        FROM Predictions
+        WHERE user_id = NEW.user_id
+    ) >= 10 THEN
+        INSERT IGNORE INTO User_Achievements(user_id, achievement_code)
+        VALUES (NEW.user_id, 'locked_in');
+    END IF;
+END$$
+
+
+CREATE TRIGGER trg_vote_round
+BEFORE INSERT ON Votes
+FOR EACH ROW
+BEGIN
+    DECLARE matchup_round INT;
+    DECLARE bracket_status VARCHAR(50);
+    DECLARE expected_status VARCHAR(50);
+
+    SELECT m.round, b.status
+    INTO matchup_round, bracket_status
+    FROM Matchups m
+    JOIN Brackets b ON m.bracket_id = b.bracket_id
+    WHERE m.matchup_id = NEW.matchup_id;
+
+    SET expected_status = CONCAT('round_', matchup_round);
+
+    IF bracket_status <> expected_status THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Votes are only allowed in the current round';
+    END IF;
+END$$
+
+
+CREATE TRIGGER trg_comment_round1
+BEFORE INSERT ON Comments
+FOR EACH ROW
+BEGIN
+    DECLARE matchup_round INT;
+
+    SELECT round
+    INTO matchup_round
+    FROM Matchups
+    WHERE matchup_id = NEW.matchup_id;
+
+    IF matchup_round <> 1 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Comments are only allowed on Round 1 matchups';
+    END IF;
+END$$
+
+DELIMITER ;
 
 DELIMITER $$
 

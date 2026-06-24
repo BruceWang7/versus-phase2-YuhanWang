@@ -13,6 +13,7 @@ from flask import Flask, request, render_template, redirect, url_for
 import mysql.connector
 import flask_login
 import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.secret_key = 'super secret string'  # Change this!
@@ -75,7 +76,7 @@ def request_loader(request):
 	data = cursor.fetchall()
 	cursor.close()
 	pwd = str(data[0][0])
-	user.is_authenticated = request.form['password'] == pwd
+	user.is_authenticated = check_password_hash(pwd, request.form['password'])
 	return user
 
 
@@ -106,7 +107,7 @@ def login():
 	cursor.close()
 	if data:
 		pwd = str(data[0][0])
-		if request.form['password'] == pwd:
+		if check_password_hash(pwd, request.form['password']):
 			user = User()
 			user.id = username
 			flask_login.login_user(user)
@@ -134,15 +135,16 @@ def register_user():
 		username = request.form.get('username')
 		email    = request.form.get('email')
 		password = request.form.get('password')
+		password_hash = generate_password_hash(password)
 		bio      = request.form.get('bio')
 	except:
 		print("couldn't find all tokens")
 		return redirect(url_for('register'))
 	cursor = conn.cursor()
-	if isUsernameUnique(username):
+	if isUsernameUnique(username) and isEmailUnique(email):
 		cursor.execute(
-			"INSERT INTO Users (username, email, password, bio) VALUES ('{0}', '{1}', '{2}', '{3}')".format(
-				username, email, password, bio or ""))
+    		"INSERT INTO Users (username, email, password, bio) VALUES ('{0}', '{1}', '{2}', '{3}')".format(
+        		username, email, password_hash, bio or ""))
 		conn.commit()
 		cursor.close()
 		# log user in
@@ -152,14 +154,21 @@ def register_user():
 		return render_template('hello.html', name=username, message='account created')
 	else:
 		cursor.close()
-		print("username already in use")
-		return redirect(url_for('register'))
+		return "Username or email already in use<br><a href='/register'>Try again</a>"
 
 
 def isUsernameUnique(username):
 	# use this to check if a username has already been registered
 	cursor = conn.cursor()
 	cursor.execute("SELECT username FROM Users WHERE username = '{0}'".format(username))
+	rows = cursor.fetchall()
+	cursor.close()
+	return len(rows) == 0
+
+
+def isEmailUnique(email):
+	cursor = conn.cursor()
+	cursor.execute("SELECT email FROM Users WHERE email = '{0}'".format(email))
 	rows = cursor.fetchall()
 	cursor.close()
 	return len(rows) == 0
@@ -194,46 +203,52 @@ def create_bracket():
 		entrant_count = int(request.form.get('entrant_count'))
 		cursor = conn.cursor()
 
-		# 1. insert the bracket row
-		cursor.execute(
-			"INSERT INTO Brackets (host_id, title, description, entrant_count) VALUES ('{0}', '{1}', '{2}', '{3}')".format(
-				uid, title, description or "", entrant_count))
-		cursor.execute("SELECT LAST_INSERT_ID()")
-		bracket_id = cursor.fetchone()[0]
-
-		# 2. insert all entrants in seed order
-		entrant_ids = []
-		for seed in range(1, entrant_count + 1):
-			entrant_name = request.form.get('entrant_' + str(seed))
+		try:
+			# 1. insert the bracket row
 			cursor.execute(
-				"INSERT INTO Entrants (bracket_id, seed, name) VALUES ('{0}', '{1}', '{2}')".format(
-					bracket_id, seed, entrant_name))
+				"INSERT INTO Brackets (host_id, title, description, entrant_count) VALUES ('{0}', '{1}', '{2}', '{3}')".format(
+					uid, title, description or "", entrant_count))
 			cursor.execute("SELECT LAST_INSERT_ID()")
-			entrant_ids.append(cursor.fetchone()[0])
+			bracket_id = cursor.fetchone()[0]
 
-		# 3. create Round 1 matchups (seed pairs: 1v2, 3v4, ...)
-		round_1_slots = entrant_count // 2
-		for slot in range(1, round_1_slots + 1):
-			a = entrant_ids[(slot - 1) * 2]
-			b = entrant_ids[(slot - 1) * 2 + 1]
-			cursor.execute(
-				"INSERT INTO Matchups (bracket_id, round, slot, entrant_a_id, entrant_b_id) VALUES ('{0}', 1, '{1}', '{2}', '{3}')".format(
-					bracket_id, slot, a, b))
-
-		# 4. create empty shells for later rounds
-		slots = round_1_slots // 2
-		round_num = 2
-		while slots >= 1:
-			for slot in range(1, slots + 1):
+			# 2. insert all entrants in seed order
+			entrant_ids = []
+			for seed in range(1, entrant_count + 1):
+				entrant_name = request.form.get('entrant_' + str(seed))
 				cursor.execute(
-					"INSERT INTO Matchups (bracket_id, round, slot) VALUES ('{0}', '{1}', '{2}')".format(
-						bracket_id, round_num, slot))
-			slots //= 2
-			round_num += 1
+					"INSERT INTO Entrants (bracket_id, seed, name) VALUES ('{0}', '{1}', '{2}')".format(
+						bracket_id, seed, entrant_name))
+				cursor.execute("SELECT LAST_INSERT_ID()")
+				entrant_ids.append(cursor.fetchone()[0])
 
-		conn.commit()
-		cursor.close()
-		return redirect(url_for('view_bracket', bracket_id=bracket_id))
+			# 3. create Round 1 matchups
+			round_1_slots = entrant_count // 2
+			for slot in range(1, round_1_slots + 1):
+				a = entrant_ids[(slot - 1) * 2]
+				b = entrant_ids[(slot - 1) * 2 + 1]
+				cursor.execute(
+					"INSERT INTO Matchups (bracket_id, round, slot, entrant_a_id, entrant_b_id) VALUES ('{0}', 1, '{1}', '{2}', '{3}')".format(
+						bracket_id, slot, a, b))
+
+			# 4. create empty shells for later rounds
+			slots = round_1_slots // 2
+			round_num = 2
+			while slots >= 1:
+				for slot in range(1, slots + 1):
+					cursor.execute(
+						"INSERT INTO Matchups (bracket_id, round, slot) VALUES ('{0}', '{1}', '{2}')".format(
+							bracket_id, round_num, slot))
+				slots //= 2
+				round_num += 1
+
+			conn.commit()
+			cursor.close()
+			return redirect(url_for('view_bracket', bracket_id=bracket_id))
+
+		except Exception as e:
+			conn.rollback()
+			cursor.close()
+			return "Create bracket failed: {0}<br><a href='/create'>Try again</a>".format(e)
 	else:
 		return render_template('create.html')
 # end bracket creation code
@@ -607,7 +622,7 @@ def profile(username):
 @app.route('/admin', methods=['GET', 'POST'])
 @flask_login.login_required
 def admin():
-	if flask_login.current_user.id != 'yhwang':
+	if flask_login.current_user.id != 'admin':
 		return "Only admin can use this page<br><a href='/'>Home</a>"
 
 	if request.method == 'GET':
